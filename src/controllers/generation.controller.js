@@ -5,6 +5,9 @@ import { StudyMaterial } from "../models/studyMaterial.models.js";
 import { Quiz } from "../models/quiz.models.js";
 import { Flashcard } from "../models/flashcard.models.js";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 // Initialize the Google Generative AI client
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);

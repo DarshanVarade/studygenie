@@ -11,12 +11,14 @@ const studyMaterialSchema = new Schema(
       type: String,
       required: true,
     },
+    // This field is no longer essential but can be kept for future use
     fileUrl: {
-      type: String, // URL from a service like Cloudinary or AWS S3
-      required: true,
+      type: String,
     },
+    // The extracted text is now the most important piece of data
     extractedText: {
       type: String,
+      required: true,
     },
     language: {
       type: String,

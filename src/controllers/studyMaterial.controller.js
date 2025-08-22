@@ -2,63 +2,84 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 import { ApiError } from "../utils/ApiError.js";
 import { StudyMaterial } from "../models/studyMaterial.models.js";
-// In a real application, you would use a file upload service
-// import { uploadOnCloudinary } from "../utils/cloudinary.js";
+import pdf from "pdf-parse/lib/pdf-parse.js";
+import fs from "fs";
+import Tesseract from "tesseract.js";
 
 const uploadMaterial = asyncHandler(async (req, res) => {
-  const { fileName, language } = req.body;
+  const { language } = req.body;
   const user = req.user._id;
 
-  if (!fileName) {
-    throw new ApiError(400, "File name is required");
+  const localFilePath = req.file?.path;
+  if (!localFilePath) {
+    throw new ApiError(400, "A file is required.");
   }
 
-  // --- Simulation of File Upload and Text Extraction ---
-  // In a real application, you would handle the file from `req.file`
-  // and upload it to a cloud service.
-  // const localFilePath = req.file?.path;
-  // if (!localFilePath) {
-  //   throw new ApiError(400, "File is missing");
-  // }
-  // const cloudinaryResponse = await uploadOnCloudinary(localFilePath);
-  // if (!cloudinaryResponse) {
-  //   throw new ApiError(500, "Failed to upload file to cloud storage");
-  // }
+  let extractedText = "";
 
-  // For now, we will use placeholder data.
-  const simulatedFileUrl = `https://example.com/uploads/${fileName.replace(
-    /\s+/g,
-    "-"
-  )}`;
-  const simulatedExtractedText =
-    "This is the simulated extracted text from the uploaded PDF. In a real application, this text would be the result of an OCR or PDF parsing process. It contains all the key concepts for generating summaries, quizzes, and flashcards. For example, mitochondria is the powerhouse of the cell.";
-  // --- End of Simulation ---
+  try {
+    // --- Smart PDF Processing ---
+    console.log("Processing PDF file...");
+    const dataBuffer = fs.readFileSync(localFilePath);
+    const data = await pdf(dataBuffer);
+    extractedText = data.text;
 
-  const studyMaterial = await StudyMaterial.create({
-    user,
-    fileName,
-    fileUrl: simulatedFileUrl, // Use cloudinaryResponse.url in a real app
-    extractedText: simulatedExtractedText,
-    language,
-  });
+    // --- OCR Fallback Logic ---
+    // If pdf-parse returns very little or no text, it's likely a scanned/image-based PDF.
+    if (!extractedText || extractedText.trim().length < 100) {
+      // Check for a meaningful amount of text
+      console.log(
+        "PDF contains little or no text. Attempting OCR with Tesseract..."
+      );
 
-  return res
-    .status(201)
-    .json(
-      new ApiResponse(201, studyMaterial, "Material uploaded successfully")
-    );
+      // Tesseract works directly with the file path
+      const result = await Tesseract.recognize(localFilePath, "eng", {
+        logger: (m) => console.log(m), // This will show OCR progress in your console
+      });
+      extractedText = result.data.text;
+    }
+    // --- End of OCR Fallback Logic ---
+
+    if (!extractedText) {
+      throw new ApiError(
+        500,
+        "Could not extract any text from the document, even after OCR."
+      );
+    }
+
+    const studyMaterial = await StudyMaterial.create({
+      user,
+      fileName: req.file.originalname,
+      extractedText: extractedText,
+      language,
+    });
+
+    return res
+      .status(201)
+      .json(
+        new ApiResponse(201, studyMaterial, "Material processed successfully")
+      );
+  } catch (error) {
+    console.error("Error during file processing:", error);
+    throw new ApiError(500, `Failed to process file: ${error.message}`);
+  } finally {
+    // Clean up the temporary file from the server
+    if (localFilePath) {
+      fs.unlinkSync(localFilePath);
+    }
+  }
 });
+
+// --- Other controller functions remain the same ---
 
 const getStudyMaterialDetails = asyncHandler(async (req, res) => {
   const { materialId } = req.params;
-
   const material = await StudyMaterial.findById(materialId);
 
   if (!material) {
     throw new ApiError(404, "Study material not found");
   }
 
-  // Ensure the user owns this material
   if (material.user.toString() !== req.user._id.toString()) {
     throw new ApiError(403, "You are not authorized to view this material");
   }
@@ -86,14 +107,12 @@ const listUserStudyMaterials = asyncHandler(async (req, res) => {
 
 const deleteStudyMaterial = asyncHandler(async (req, res) => {
   const { materialId } = req.params;
-
   const material = await StudyMaterial.findById(materialId);
 
   if (!material) {
     throw new ApiError(404, "Study material not found");
   }
 
-  // Ensure the user owns this material before deleting
   if (material.user.toString() !== req.user._id.toString()) {
     throw new ApiError(403, "You are not authorized to delete this material");
   }

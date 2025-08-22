@@ -6,12 +6,16 @@ import {
   deleteStudyMaterial,
 } from "../controllers/studyMaterial.controller.js";
 import { verifyJwt } from "../middlewares/auth.middlewares.js";
-// In a real app with file uploads, you'd use middleware like Multer here
+import { upload } from "../middlewares/multer.middlewares.js"; // Import Multer
 
 const router = Router();
-router.use(verifyJwt); // Apply JWT verification to all routes in this file
+router.use(verifyJwt); // Secure all routes in this file
 
-router.route("/").post(uploadMaterial).get(listUserStudyMaterials);
+// This route now uses Multer to handle a single file upload
+// The field name in the form-data must be "document"
+router.route("/upload").post(upload.single("document"), uploadMaterial);
+
+router.route("/").get(listUserStudyMaterials);
 
 router
   .route("/:materialId")
