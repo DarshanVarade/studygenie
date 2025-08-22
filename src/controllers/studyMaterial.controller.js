@@ -5,6 +5,8 @@ import { StudyMaterial } from "../models/studyMaterial.models.js";
 import pdf from "pdf-parse/lib/pdf-parse.js";
 import fs from "fs";
 import Tesseract from "tesseract.js";
+import { fromPath } from "pdf2pic";
+import path from "path";
 
 const uploadMaterial = asyncHandler(async (req, res) => {
   const { language } = req.body;
@@ -16,35 +18,52 @@ const uploadMaterial = asyncHandler(async (req, res) => {
   }
 
   let extractedText = "";
+  // Define a temporary directory for image conversion
+  const tempImageDir = path.join("public", "temp", "images");
+  if (!fs.existsSync(tempImageDir)) {
+    fs.mkdirSync(tempImageDir, { recursive: true });
+  }
 
   try {
-    // --- Smart PDF Processing ---
     console.log("Processing PDF file...");
     const dataBuffer = fs.readFileSync(localFilePath);
     const data = await pdf(dataBuffer);
     extractedText = data.text;
 
-    // --- OCR Fallback Logic ---
-    // If pdf-parse returns very little or no text, it's likely a scanned/image-based PDF.
+    // If the PDF has very little text, assume it's a scanned document and perform OCR
     if (!extractedText || extractedText.trim().length < 100) {
-      // Check for a meaningful amount of text
-      console.log(
-        "PDF contains little or no text. Attempting OCR with Tesseract..."
-      );
+      console.log("PDF contains little text. Attempting OCR with Tesseract...");
 
-      // Tesseract works directly with the file path
-      const result = await Tesseract.recognize(localFilePath, "eng", {
-        logger: (m) => console.log(m), // This will show OCR progress in your console
-      });
-      extractedText = result.data.text;
+      // --- PDF to Image Conversion Logic using pdf2pic ---
+      const options = {
+        density: 300, // DPI for better image quality
+        savePath: tempImageDir,
+        saveFilename: `page_${Date.now()}`,
+        format: "png",
+      };
+      const convert = fromPath(localFilePath, options);
+      const resolvedImages = await convert.bulk(-1, { responseType: "image" }); // -1 converts all pages
+
+      if (!resolvedImages || resolvedImages.length === 0) {
+        throw new Error("Could not convert PDF to images for OCR.");
+      }
+      // --- End of Conversion Logic ---
+
+      let ocrText = "";
+      for (const image of resolvedImages) {
+        console.log(`Performing OCR on ${image.name}...`);
+        const result = await Tesseract.recognize(image.path, "eng", {
+          logger: (m) => console.log(m.status, m.progress),
+        });
+        ocrText += result.data.text + "\n";
+        // Clean up the generated image file immediately after processing
+        fs.unlinkSync(image.path);
+      }
+      extractedText = ocrText;
     }
-    // --- End of OCR Fallback Logic ---
 
     if (!extractedText) {
-      throw new ApiError(
-        500,
-        "Could not extract any text from the document, even after OCR."
-      );
+      throw new ApiError(500, "Could not extract any text from the document.");
     }
 
     const studyMaterial = await StudyMaterial.create({
@@ -63,15 +82,14 @@ const uploadMaterial = asyncHandler(async (req, res) => {
     console.error("Error during file processing:", error);
     throw new ApiError(500, `Failed to process file: ${error.message}`);
   } finally {
-    // Clean up the temporary file from the server
-    if (localFilePath) {
+    // Clean up the original temporary PDF file from the server
+    if (fs.existsSync(localFilePath)) {
       fs.unlinkSync(localFilePath);
     }
   }
 });
 
 // --- Other controller functions remain the same ---
-
 const getStudyMaterialDetails = asyncHandler(async (req, res) => {
   const { materialId } = req.params;
   const material = await StudyMaterial.findById(materialId);
